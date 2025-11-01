@@ -1,0 +1,89 @@
+# ingress-demo-apps.yaml
+# Example: Two simple apps for Ingress routing demo
+
+---
+# App 1: Hello World
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-app
+  labels:
+    app: hello
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello
+  template:
+    metadata:
+      labels:
+        app: hello
+    spec:
+      containers:
+      - name: hello
+        image: hashicorp/http-echo:1.0
+        args:
+        - "-text=Hello from App 1"
+        - "-listen=:5678"
+        ports:
+        - containerPort: 5678
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-service
+  labels:
+    app: hello
+spec:
+  selector:
+    app: hello
+  ports:
+  - port: 5678
+    targetPort: 5678
+
+---
+# App 2: Goodbye World
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: goodbye-app
+  labels:
+    app: goodbye
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: goodbye
+  template:
+    metadata:
+      labels:
+        app: goodbye
+    spec:
+      containers:
+      - name: goodbye
+        image: hashicorp/http-echo:1.0
+        args:
+        - "-text=Goodbye from App 2"
+        - "-listen=:5678"
+        ports:
+        - containerPort: 5678
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: goodbye-service
+  labels:
+    app: goodbye
+spec:
+  selector:
+    app: goodbye
+  ports:
+  - port: 5678
+    targetPort: 5678
+
+# Usage:
+# kubectl apply -f ingress-demo-apps.yaml
+# kubectl get deployments
+# kubectl get services

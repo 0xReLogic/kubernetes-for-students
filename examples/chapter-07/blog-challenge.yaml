@@ -1,0 +1,186 @@
+# blog-challenge.yaml
+# Challenge solution: Blog application with Ingress
+# Requirements:
+# - blog.local/ -> frontend
+# - blog.local/api/* -> API
+# - admin.blog.local/ -> admin dashboard
+
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-frontend
+  labels:
+    app: blog-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: blog-frontend
+  template:
+    metadata:
+      labels:
+        app: blog-frontend
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-frontend-service
+spec:
+  selector:
+    app: blog-frontend
+  ports:
+  - port: 80
+
+---
+# API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-api
+  labels:
+    app: blog-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: blog-api
+  template:
+    metadata:
+      labels:
+        app: blog-api
+    spec:
+      containers:
+      - name: api
+        image: hashicorp/http-echo:1.0
+        args:
+        - "-text=Blog API: {posts: [], users: [], comments: []}"
+        - "-listen=:8080"
+        ports:
+        - containerPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-api-service
+spec:
+  selector:
+    app: blog-api
+  ports:
+  - port: 8080
+
+---
+# Admin Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-admin
+  labels:
+    app: blog-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blog-admin
+  template:
+    metadata:
+      labels:
+        app: blog-admin
+    spec:
+      containers:
+      - name: admin
+        image: hashicorp/http-echo:1.0
+        args:
+        - "-text=Blog Admin Dashboard - Manage Posts & Users"
+        - "-listen=:3000"
+        ports:
+        - containerPort: 3000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-admin-service
+spec:
+  selector:
+    app: blog-admin
+  ports:
+  - port: 3000
+
+---
+# Ingress with multiple hosts and paths
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: blog-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+  # Main blog domain
+  - host: blog.local
+    http:
+      paths:
+      # API at /api/* (must come before /)
+      - path: /api(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: blog-api-service
+            port:
+              number: 8080
+      
+      # Frontend at root (must be last)
+      - path: /()(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: blog-frontend-service
+            port:
+              number: 80
+  
+  # Admin subdomain
+  - host: admin.blog.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: blog-admin-service
+            port:
+              number: 3000
+
+# Prerequisites:
+# 1. NGINX Ingress Controller: minikube addons enable ingress
+#
+# Usage:
+# kubectl apply -f blog-challenge.yaml
+#
+# Add to /etc/hosts (Linux/Mac) or C:\Windows\System32\drivers\etc\hosts (Windows):
+# 192.168.49.2  blog.local
+# 192.168.49.2  admin.blog.local
+#
+# Test all endpoints:
+# curl http://blog.local/
+# curl http://blog.local/api/posts
+# curl http://admin.blog.local/
+#
+# Or visit in browser:
+# http://blog.local/
+# http://blog.local/api/posts
+# http://admin.blog.local/
+#
+# Check Ingress:
+# kubectl get ingress
+# kubectl describe ingress blog-ingress

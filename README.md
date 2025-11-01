@@ -75,7 +75,7 @@ These are components you'll use 90% of the time working with Kubernetes.
 - **[Chapter 4: Services - The Traffic Director](./chapters/04-services/)** - How pods communicate when their IP addresses keep changing
 - **[Chapter 5: ConfigMaps & Secrets - Configuration Done Right](./chapters/05-config/)** - Externalize configuration the professional way
 - **[Chapter 6: Persistent Storage - Data That Survives](./chapters/06-storage/)** - Volumes, PVCs, and storage that outlives pods
-- **Chapter 7: Ingress - The Front Door** - Coming soon
+- **[Chapter 7: Ingress - The Front Door](./chapters/07-ingress/)** - Production-ready external access with SSL and routing
 - **Chapter 8: Debugging & Troubleshooting** - Coming soon
 - **Chapter 9: Best Practices** - Coming soon
 - **Chapter 10: Capstone Projects** - Coming soon

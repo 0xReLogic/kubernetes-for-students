@@ -1,0 +1,54 @@
+# ingress-path-based.yaml
+# Example: Path-based routing with Ingress
+# /hello -> hello-service
+# /goodbye -> goodbye-service
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: path-based-ingress
+  annotations:
+    # Rewrite /hello to / before forwarding to backend
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: demo.local
+    http:
+      paths:
+      # Route /hello/* to hello-service
+      - path: /hello
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-service
+            port:
+              number: 5678
+      
+      # Route /goodbye/* to goodbye-service
+      - path: /goodbye
+        pathType: Prefix
+        backend:
+          service:
+            name: goodbye-service
+            port:
+              number: 5678
+
+# Prerequisites:
+# 1. NGINX Ingress Controller installed: minikube addons enable ingress
+# 2. Apps deployed: kubectl apply -f ingress-demo-apps.yaml
+#
+# Usage:
+# kubectl apply -f ingress-path-based.yaml
+#
+# Add to /etc/hosts (Linux/Mac) or C:\Windows\System32\drivers\etc\hosts (Windows):
+# 192.168.49.2  demo.local
+# (Replace with your minikube ip)
+#
+# Test:
+# curl http://demo.local/hello
+# curl http://demo.local/goodbye
+#
+# Or visit in browser:
+# http://demo.local/hello
+# http://demo.local/goodbye

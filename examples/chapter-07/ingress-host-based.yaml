@@ -1,0 +1,55 @@
+# ingress-host-based.yaml
+# Example: Host-based routing (virtual hosts)
+# hello.local -> hello-service
+# goodbye.local -> goodbye-service
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: host-based-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+  # Rule 1: Route hello.local to hello-service
+  - host: hello.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-service
+            port:
+              number: 5678
+  
+  # Rule 2: Route goodbye.local to goodbye-service
+  - host: goodbye.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: goodbye-service
+            port:
+              number: 5678
+
+# Prerequisites:
+# 1. NGINX Ingress Controller installed: minikube addons enable ingress
+# 2. Apps deployed: kubectl apply -f ingress-demo-apps.yaml
+#
+# Usage:
+# kubectl apply -f ingress-host-based.yaml
+#
+# Add to /etc/hosts (Linux/Mac) or C:\Windows\System32\drivers\etc\hosts (Windows):
+# 192.168.49.2  hello.local
+# 192.168.49.2  goodbye.local
+# (Replace with your minikube ip from: minikube ip)
+#
+# Test:
+# curl http://hello.local
+# curl http://goodbye.local
+#
+# Or visit in browser:
+# http://hello.local
+# http://goodbye.local

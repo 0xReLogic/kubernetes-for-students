@@ -11,6 +11,7 @@ examples/
 ├── chapter-04/   # Services
 ├── chapter-05/   # ConfigMaps & Secrets
 ├── chapter-06/   # Persistent Storage
+├── chapter-07/   # Ingress
 └── ...
 ```
 

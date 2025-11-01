@@ -1,0 +1,61 @@
+# ingress-tls.yaml
+# Example: HTTPS with TLS/SSL certificate
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tls-ingress
+  annotations:
+    # Force HTTPS redirect
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  
+  # TLS configuration
+  tls:
+  - hosts:
+    - demo.local
+    secretName: demo-tls  # Reference to TLS secret
+  
+  rules:
+  - host: demo.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-service
+            port:
+              number: 5678
+
+# Prerequisites:
+# 1. NGINX Ingress Controller: minikube addons enable ingress
+# 2. Apps deployed: kubectl apply -f ingress-demo-apps.yaml
+# 3. TLS secret created (see commands below)
+#
+# Create TLS certificate (self-signed for testing):
+# openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#   -keyout tls.key -out tls.crt \
+#   -subj "/CN=demo.local/O=demo"
+#
+# Create Kubernetes secret:
+# kubectl create secret tls demo-tls \
+#   --cert=tls.crt \
+#   --key=tls.key
+#
+# Usage:
+# kubectl apply -f ingress-tls.yaml
+#
+# Add to /etc/hosts:
+# 192.168.49.2  demo.local
+#
+# Test HTTPS (ignore self-signed cert warning):
+# curl -k https://demo.local
+#
+# Or visit in browser (accept security warning):
+# https://demo.local
+#
+# Production note:
+# For production, use real certificates from Let's Encrypt with cert-manager:
+# https://cert-manager.io/docs/
