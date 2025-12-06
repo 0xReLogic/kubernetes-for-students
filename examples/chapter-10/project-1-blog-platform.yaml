@@ -1,0 +1,732 @@
+# Complete Blog Platform Deployment
+# This is a single file deployment for the Personal Blog Platform (Project 1)
+# Deploy with: kubectl apply -f project-1-blog-platform.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: blog-platform
+  labels:
+    project: capstone-1
+    app: blog
+
+---
+# MySQL Persistent Volume Claim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: blog-mysql-pvc
+  namespace: blog-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# MySQL Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: blog-mysql-secret
+  namespace: blog-platform
+type: Opaque
+stringData:
+  root-password: "RootPass123"
+  database: "blog_db"
+  user: "blog_user"
+  password: "BlogPass123"
+
+---
+# MySQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-mysql
+  namespace: blog-platform
+  labels:
+    app: blog
+    tier: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blog
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: blog
+        tier: database
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: root-password
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: database
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: user
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-storage
+          mountPath: /var/lib/mysql
+        livenessProbe:
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - localhost
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - mysql
+            - -h
+            - localhost
+            - -u
+            - root
+            - -p$MYSQL_ROOT_PASSWORD
+            - -e
+            - "SELECT 1"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: mysql-storage
+        persistentVolumeClaim:
+          claimName: blog-mysql-pvc
+
+---
+# MySQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-mysql
+  namespace: blog-platform
+  labels:
+    app: blog
+    tier: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3306
+    targetPort: 3306
+  selector:
+    app: blog
+    tier: database
+
+---
+# API ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blog-api-config
+  namespace: blog-platform
+data:
+  DB_HOST: "blog-mysql"
+  DB_PORT: "3306"
+  API_PORT: "3000"
+
+---
+# API Deployment (Node.js REST API)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-api
+  namespace: blog-platform
+  labels:
+    app: blog
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: blog
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: blog
+        tier: backend
+    spec:
+      containers:
+      - name: api
+        image: node:18-alpine
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Installing dependencies..."
+            cd /tmp
+            npm init -y
+            npm install express mysql2
+            
+            echo "Creating API server..."
+            cat > /app/server.js << 'EOFAPI'
+            const express = require('express');
+            const mysql = require('mysql2/promise');
+            const app = express();
+            
+            app.use(express.json());
+            
+            const dbConfig = {
+              host: process.env.DB_HOST,
+              port: process.env.DB_PORT,
+              user: process.env.DB_USER,
+              password: process.env.DB_PASSWORD,
+              database: process.env.DB_NAME
+            };
+            
+            let pool;
+            
+            async function initDB() {
+              pool = mysql.createPool(dbConfig);
+              const connection = await pool.getConnection();
+              
+              await connection.query(\`
+                CREATE TABLE IF NOT EXISTS posts (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  title VARCHAR(255) NOT NULL,
+                  content TEXT NOT NULL,
+                  author VARCHAR(100) NOT NULL,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+              \`);
+              
+              connection.release();
+              console.log('[Blog API] Database initialized successfully');
+            }
+            
+            app.get('/health', (req, res) => {
+              res.json({ 
+                status: 'healthy', 
+                service: 'blog-api',
+                timestamp: new Date().toISOString() 
+              });
+            });
+            
+            app.get('/posts', async (req, res) => {
+              try {
+                const [rows] = await pool.query('SELECT * FROM posts ORDER BY created_at DESC');
+                console.log(\`[Blog API] Fetched \${rows.length} posts\`);
+                res.json(rows);
+              } catch (error) {
+                console.error('[Blog API] Error fetching posts:', error);
+                res.status(500).json({ error: 'Failed to fetch posts' });
+              }
+            });
+            
+            app.post('/posts', async (req, res) => {
+              try {
+                const { title, content, author } = req.body;
+                const [result] = await pool.query(
+                  'INSERT INTO posts (title, content, author) VALUES (?, ?, ?)',
+                  [title, content, author]
+                );
+                console.log(\`[Blog API] Created post: \${title} by \${author}\`);
+                res.status(201).json({ id: result.insertId, title, content, author });
+              } catch (error) {
+                console.error('[Blog API] Error creating post:', error);
+                res.status(500).json({ error: 'Failed to create post' });
+              }
+            });
+            
+            const port = process.env.API_PORT || 3000;
+            
+            initDB().then(() => {
+              app.listen(port, '0.0.0.0', () => {
+                console.log(\`[Blog API] Server running on port \${port}\`);
+              });
+            }).catch(err => {
+              console.error('[Blog API] Failed to initialize:', err);
+              process.exit(1);
+            });
+            EOFAPI
+            
+            cp -r /tmp/node_modules /app/
+            echo "Starting Blog API..."
+            node /app/server.js
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: blog-api-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: blog-api-config
+              key: DB_PORT
+        - name: API_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: blog-api-config
+              key: API_PORT
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: user
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: password
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: blog-mysql-secret
+              key: database
+        ports:
+        - containerPort: 3000
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-api
+  namespace: blog-platform
+  labels:
+    app: blog
+    tier: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3000
+    targetPort: 3000
+  selector:
+    app: blog
+    tier: backend
+
+---
+# Frontend Deployment (NGINX + HTML/JS)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-frontend
+  namespace: blog-platform
+  labels:
+    app: blog
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: blog
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: blog
+        tier: frontend
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            cat > /usr/share/nginx/html/index.html << 'EOFHTML'
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Kubernetes Blog Platform</title>
+              <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body {
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                  line-height: 1.6;
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  min-height: 100vh;
+                  padding: 20px;
+                }
+                .container {
+                  max-width: 900px;
+                  margin: 0 auto;
+                  background: white;
+                  border-radius: 15px;
+                  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                  overflow: hidden;
+                }
+                .header {
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  color: white;
+                  padding: 50px 30px;
+                  text-align: center;
+                }
+                .header h1 { font-size: 3em; margin-bottom: 10px; }
+                .header p { font-size: 1.2em; opacity: 0.9; }
+                .content { padding: 40px; }
+                .post-form {
+                  background: #f8f9fa;
+                  padding: 30px;
+                  border-radius: 10px;
+                  margin-bottom: 40px;
+                }
+                .post-form h2 { color: #667eea; margin-bottom: 25px; }
+                .form-group { margin-bottom: 20px; }
+                .form-group label {
+                  display: block;
+                  margin-bottom: 8px;
+                  font-weight: 600;
+                  color: #555;
+                }
+                .form-group input, .form-group textarea {
+                  width: 100%;
+                  padding: 12px;
+                  border: 2px solid #e0e0e0;
+                  border-radius: 8px;
+                  font-size: 16px;
+                  transition: all 0.3s;
+                }
+                .form-group input:focus, .form-group textarea:focus {
+                  outline: none;
+                  border-color: #667eea;
+                  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+                }
+                .form-group textarea { min-height: 150px; resize: vertical; }
+                .btn {
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  color: white;
+                  border: none;
+                  padding: 15px 35px;
+                  border-radius: 8px;
+                  font-size: 16px;
+                  font-weight: 600;
+                  cursor: pointer;
+                  transition: all 0.3s;
+                }
+                .btn:hover {
+                  transform: translateY(-2px);
+                  box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+                }
+                .posts h2 { color: #667eea; margin-bottom: 25px; font-size: 2em; }
+                .post {
+                  background: white;
+                  border: 2px solid #e0e0e0;
+                  border-radius: 10px;
+                  padding: 30px;
+                  margin-bottom: 25px;
+                  transition: all 0.3s;
+                }
+                .post:hover {
+                  transform: translateY(-5px);
+                  box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+                  border-color: #667eea;
+                }
+                .post-title {
+                  font-size: 1.8em;
+                  color: #667eea;
+                  margin-bottom: 12px;
+                  font-weight: 700;
+                }
+                .post-meta {
+                  color: #888;
+                  font-size: 0.95em;
+                  margin-bottom: 18px;
+                  display: flex;
+                  gap: 15px;
+                }
+                .post-content {
+                  color: #555;
+                  line-height: 1.8;
+                  font-size: 1.05em;
+                }
+                .loading {
+                  text-align: center;
+                  padding: 60px;
+                  color: #888;
+                  font-size: 1.3em;
+                }
+                .error, .success {
+                  padding: 15px 20px;
+                  border-radius: 8px;
+                  margin-bottom: 20px;
+                  font-weight: 500;
+                }
+                .error {
+                  background: #fee;
+                  border: 2px solid #fcc;
+                  color: #c33;
+                }
+                .success {
+                  background: #efe;
+                  border: 2px solid #cfc;
+                  color: #3c3;
+                }
+                .badge {
+                  display: inline-block;
+                  background: #667eea;
+                  color: white;
+                  padding: 5px 12px;
+                  border-radius: 20px;
+                  font-size: 0.85em;
+                  font-weight: 600;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>🚀 Kubernetes Blog</h1>
+                  <p>Capstone Project 1 - Powered by K8s Microservices</p>
+                </div>
+                
+                <div class="content">
+                  <div class="post-form">
+                    <h2>✍️ Write a New Post</h2>
+                    <div id="message"></div>
+                    <form id="postForm">
+                      <div class="form-group">
+                        <label for="title">Post Title</label>
+                        <input type="text" id="title" placeholder="My amazing Kubernetes journey..." required>
+                      </div>
+                      <div class="form-group">
+                        <label for="author">Your Name</label>
+                        <input type="text" id="author" placeholder="John Doe" required>
+                      </div>
+                      <div class="form-group">
+                        <label for="content">Post Content</label>
+                        <textarea id="content" placeholder="Share your thoughts..." required></textarea>
+                      </div>
+                      <button type="submit" class="btn">📝 Publish Post</button>
+                    </form>
+                  </div>
+                  
+                  <div class="posts">
+                    <h2>📚 Recent Posts</h2>
+                    <div id="postsContainer">
+                      <div class="loading">Loading posts...</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <script>
+                const API_URL = '/api';
+                
+                async function loadPosts() {
+                  try {
+                    const response = await fetch(\`\${API_URL}/posts\`);
+                    if (!response.ok) throw new Error('API request failed');
+                    
+                    const posts = await response.json();
+                    const container = document.getElementById('postsContainer');
+                    
+                    if (posts.length === 0) {
+                      container.innerHTML = '<div class="loading">No posts yet. Be the first to share your thoughts!</div>';
+                      return;
+                    }
+                    
+                    container.innerHTML = posts.map(post => \`
+                      <div class="post">
+                        <div class="post-title">\${escapeHtml(post.title)}</div>
+                        <div class="post-meta">
+                          <span>👤 <strong>\${escapeHtml(post.author)}</strong></span>
+                          <span>📅 \${new Date(post.created_at).toLocaleDateString()}</span>
+                          <span>🕐 \${new Date(post.created_at).toLocaleTimeString()}</span>
+                        </div>
+                        <div class="post-content">\${escapeHtml(post.content)}</div>
+                      </div>
+                    \`).join('');
+                  } catch (error) {
+                    console.error('Error loading posts:', error);
+                    document.getElementById('postsContainer').innerHTML = 
+                      '<div class="error">⚠️ Failed to load posts. Check your API connection.</div>';
+                  }
+                }
+                
+                document.getElementById('postForm').addEventListener('submit', async (e) => {
+                  e.preventDefault();
+                  
+                  const title = document.getElementById('title').value;
+                  const author = document.getElementById('author').value;
+                  const content = document.getElementById('content').value;
+                  const messageDiv = document.getElementById('message');
+                  
+                  try {
+                    const response = await fetch(\`\${API_URL}/posts\`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ title, author, content })
+                    });
+                    
+                    if (response.ok) {
+                      messageDiv.innerHTML = '<div class="success">✅ Post published successfully!</div>';
+                      document.getElementById('postForm').reset();
+                      setTimeout(() => { messageDiv.innerHTML = ''; }, 4000);
+                      await loadPosts();
+                    } else {
+                      throw new Error('Failed to publish');
+                    }
+                  } catch (error) {
+                    console.error('Error creating post:', error);
+                    messageDiv.innerHTML = '<div class="error">⚠️ Failed to publish. Please try again.</div>';
+                  }
+                });
+                
+                function escapeHtml(text) {
+                  const div = document.createElement('div');
+                  div.textContent = text;
+                  return div.innerHTML;
+                }
+                
+                // Initial load and auto-refresh every 30 seconds
+                loadPosts();
+                setInterval(loadPosts, 30000);
+              </script>
+            </body>
+            </html>
+            EOFHTML
+            
+            cat > /etc/nginx/conf.d/default.conf << 'EOFNGINX'
+            server {
+              listen 80;
+              server_name _;
+              
+              location / {
+                root /usr/share/nginx/html;
+                index index.html;
+                try_files $uri $uri/ /index.html;
+              }
+              
+              location /api/ {
+                proxy_pass http://blog-api:3000/;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection 'upgrade';
+                proxy_set_header Host $host;
+                proxy_cache_bypass $http_upgrade;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_connect_timeout 60s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+              }
+              
+              # Health check endpoint
+              location /nginx-health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+              }
+            }
+            EOFNGINX
+            
+            echo "Starting NGINX..."
+            nginx -g 'daemon off;'
+        ports:
+        - containerPort: 80
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /nginx-health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /nginx-health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-frontend
+  namespace: blog-platform
+  labels:
+    app: blog
+    tier: frontend
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+  selector:
+    app: blog
+    tier: frontend
+
+---
+# Optional: Ingress (requires Ingress controller)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: blog-ingress
+  namespace: blog-platform
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: blog.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: blog-frontend
+            port:
+              number: 80

@@ -78,7 +78,7 @@ These are components you'll use 90% of the time working with Kubernetes.
 - **[Chapter 7: Ingress - The Front Door](./chapters/07-ingress/)** - Production-ready external access with SSL and routing
 - **[Chapter 8: Debugging & Troubleshooting - When Things Go Wrong](./chapters/08-debugging/)** - Systematic approach to fix any Kubernetes issue
 - **[Chapter 9: Best Practices - Production-Ready Kubernetes](./chapters/09-best-practices/)** - Security, performance, and reliability patterns
-- **Chapter 10: Capstone Projects** - Coming soon
+- **[Chapter 10: Capstone Projects - Build Real Applications](./chapters/10-capstone-projects/)** - Three complete projects from beginner to advanced
 
 ## Prerequisites
 
